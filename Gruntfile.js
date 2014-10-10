@@ -11,7 +11,7 @@ module.exports = function(grunt) {
         command: 'make clean'
       },
       run: {
-        command: './cachesim -v 3 -k 3 < traces/astar.trace'
+        command: './cachesim -v 0 -k 0 < traces/perlbench.trace'
       }
     },
     watch: {

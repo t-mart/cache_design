@@ -103,7 +103,7 @@ void print_statistics(struct cache_stats_t* p_stats) {
     printf("Prefetched blocks: %" PRIu64 "\n", p_stats->prefetched_blocks);
     printf("Useful prefetches: %" PRIu64 "\n", p_stats->useful_prefetches);
     printf("Bytes transferred to/from memory: %" PRIu64 "\n", p_stats->bytes_transferred);
-    printf("Hit Time: %" PRIu64 "\n", p_stats->hit_time);
+    printf("Hit Time: %f\n", p_stats->hit_time);
     printf("Miss Penalty: %" PRIu64 "\n", p_stats->miss_penalty);
     printf("Miss rate: %f\n", p_stats->miss_rate);
     printf("Average access time (AAT): %f\n", p_stats->avg_access_time);

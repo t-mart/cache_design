@@ -18,7 +18,7 @@ struct cache_stats_t {
   uint64_t useful_prefetches;
   uint64_t bytes_transferred;
 
-  uint64_t hit_time;
+  double hit_time;
   uint64_t miss_penalty;
   double   miss_rate;
   double   avg_access_time;
@@ -40,8 +40,13 @@ static const char     READ = 'r';
 static const char     WRITE = 'w';
 
 // to help with debugging
-static const char *    L1_name = "L1";
-static const char *    VC_name = "VC";
+static const char * cache_name[] = {"L1", "VC", "MM"};
+
+enum cache_level{
+  L1_level = 0,
+  VC_level = 1,
+  MM_level = 2
+};
 
 struct block {
 	char dirty;
@@ -51,7 +56,7 @@ struct block {
 };
 
 struct cache {
-	const char * name;
+	enum cache_level level;
 	struct block * blocks;
 	uint64_t n_blocks;
 	uint64_t blocks_per_set;
@@ -83,6 +88,9 @@ void print_cache_info(struct cache * c);
 void print_block_info(struct block * b);
 struct block * evict_choice(struct block * first_block_in_set, uint64_t blocks_per_set);
 void copy_block(struct block * from, struct block * to);
-char is_addr_in_block(uint64_t addr, struct block * b);
+void general_cache_access(struct cache * cache, char rw, uint64_t addr, struct cache_stats_t* p_stats);
+struct block * get_addr_set(struct cache * cache, uint64_t addr);
+struct block * find_block_in_set(struct block * first_block_in_set, uint64_t blocks_per_set, uint64_t addr);
+void overwrite_block_for_new_addr(struct block * block_to_overwrite, uint64_t new_addr);
 
 #endif /* CACHESIM_H */
