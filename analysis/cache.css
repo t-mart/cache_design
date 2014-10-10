@@ -1,0 +1,54 @@
+.axis path,
+.axis line {
+  fill: none;
+  stroke: #000;
+  shape-rendering: crispEdges;
+}
+
+body {
+  font-family: sans-serif;
+  width: 800px;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 1.35em;
+}
+
+h2 {
+  font-size: 1.15em;
+}
+
+h3 {
+  font-size: 1em;
+  font-weight: bold;
+}
+
+body > header {
+  text-align: justify;
+}
+
+body header p {
+  margin: 0.5em 0;
+}
+
+svg {
+  padding: 0px auto;
+}
+
+body article select {
+  padding: 0;
+}
+
+body article label {
+  width: auto;
+  margin: 0 auto;
+}
+
+footer small {
+  font-style: italic;
+}
+
+.tick {
+  font-size: 0.7em;
+}
