@@ -9,7 +9,7 @@
  /* on misses it updates the block in main memory and brings the block to the cache;  */
  /* Subsequent writes to the same block, if the block originally caused a miss, will hit in the cache next time, setting dirty bit for the block. That will eliminate extra memory accesses and result in very efficient execution compared with Write Through with Write Allocate combination. */
 
-struct cache L1, VC, MM;
+struct cache L1, VC;
 
 // common attribute to both caches
 uint64_t bytes_per_block;
@@ -17,11 +17,20 @@ uint64_t _b;
 
 uint64_t _s;
 
+uint64_t _k;
+char prefetch_d = 0;
+uint64_t prefetch_last_miss_block = 0;
+uint64_t prefetch_pending_stride = 0;
+
+char VC_enabled = 0;
+char prefetch_enabled = 0;
+
 uint64_t cur_time = 0;
 
 // Given a set defined by first_block_in_set and blocks_per_set set, return a
 // pointer to the block that should be evicted. See update_time_on_access for
-// more details. This function can return invalid blocks.
+// more details. This function will return the first invalid block it sees if
+// one exists in the set.
 struct block * evict_choice(struct block * first_block_in_set, uint64_t blocks_per_set) {
 	struct block * choice = first_block_in_set, * this = first_block_in_set;
 	uint64_t i;
@@ -42,9 +51,6 @@ void print_cache_info(struct cache * c) {
 	printf("\tblocks: %" PRIu64 "\n",c->n_blocks );
 	printf("\tblocks/set: %" PRIu64 "\n", c->blocks_per_set);
 	printf("\tsets: %" PRIu64 "\n", N_SETS_FROM_CACHE(c));
-	printf("\tvictim cache: %s\n", (c->victim_cache == NULL) ? "null" : cache_name[c->victim_cache->level]);
-	printf("\teviction policy: %s\n", (c->update_time_on_access) ? "lru" : "fifo");
-	printf("\tblocks to prefetch: %" PRIu64 "\n\n", c->n_prefetch_blocks);
 }
 
 void print_block_info(struct block * b) {
@@ -67,34 +73,36 @@ void print_block_info(struct block * b) {
  * @k The prefetch distance is K
  */
 void setup_cache(uint64_t c, uint64_t b, uint64_t s, uint64_t v, uint64_t k) {
-	// this is a common attribute to both caches
 	bytes_per_block = BYTES_PER_BLOCK(b);
 	_b = b;
 	_s = s;
+	_k = k;
 
 	L1.level = L1_level;
 	L1.n_blocks = N_BLOCKS(c,b);
 	L1.blocks_per_set = BLOCKS_PER_SET(s);
-	L1.n_prefetch_blocks = k;
-	L1.update_time_on_access = 1;
-	L1.victim_cache = v ? &VC : NULL;
 	L1.blocks = calloc(L1.n_blocks, sizeof(struct block));
-	print_cache_info(&L1);
 
 	if (v) {
 		VC.level = VC_level;
 		VC.n_blocks = v;
 		VC.blocks_per_set = v;
-		VC.n_prefetch_blocks = 0;
-		VC.update_time_on_access = 0;
-		VC.victim_cache = NULL;
 		VC.blocks = calloc(VC.n_blocks, sizeof(struct block));
-		print_cache_info(&VC);
 	}
+
+	VC_enabled = v;
+	prefetch_enabled = k;
 }
 
-void copy_block(struct block * from, struct block * to){
+void copy_block(struct block * from, struct block * to) {
 	memcpy(to, from, sizeof(struct block));
+}
+
+void swap_blocks(struct block * a, struct block * b) {
+	struct block temp;
+	copy_block(a, &temp);
+	copy_block(b, a);
+	copy_block(&temp, b);
 }
 
 /**
@@ -109,43 +117,35 @@ void copy_block(struct block * from, struct block * to){
 void cache_access(char rw, uint64_t address, struct cache_stats_t* p_stats) {
 	(rw == READ) ? p_stats->reads++ : p_stats->writes++;
 
-	general_cache_access(&L1, rw, address, p_stats);
+	L1_cache_access(rw, address, p_stats);
+	cur_time++;
 }
 
-void general_cache_access(struct cache * cache, char rw, uint64_t addr, struct cache_stats_t* p_stats) {
-	struct block * first_block_in_set = get_addr_set(cache, addr), * evict_block;
-	struct block * block_in_cache = find_block_in_set(first_block_in_set, cache->blocks_per_set, addr);
+void L1_cache_access(char rw, uint64_t addr, struct cache_stats_t* p_stats) {
+	struct block * first_block_in_set = get_addr_set(&L1, addr), * evict_block;
+	struct block * block_in_cache = find_block_in_set(first_block_in_set, L1.blocks_per_set, addr);
 
 	if (block_in_cache != NULL){
 		// hit
 		if (rw == WRITE)
 			block_in_cache->dirty = 1;
-		if (cache->update_time_on_access)
-			block_in_cache->time = cur_time;
+		block_in_cache->time = cur_time;
 	} else {
 		// miss
-		if (cache->level == L1_level) {
-			p_stats->misses++;
-			(rw == READ) ? p_stats->read_misses++ : p_stats->write_misses++;
-			(rw == READ) ? p_stats->read_misses_combined++ : p_stats->write_misses_combined++;
-			if (cache->victim_cache == NULL)
-				p_stats->vc_misses++;
-
+		p_stats->misses++;
+		(rw == READ) ? p_stats->read_misses++ : p_stats->write_misses++;
+		if (VC_enabled) {
+			VC_cache_access(rw, addr, p_stats, first_block_in_set);
 		} else {
-			p_stats->vc_misses++;
-			(rw == READ) ? p_stats->read_misses_combined++ : p_stats->write_misses_combined++;
-		}
-
-		if (cache->victim_cache != NULL) {
-			general_cache_access(cache->victim_cache, rw, addr, p_stats);
-		} else {
-			evict_block = evict_choice(first_block_in_set, cache->blocks_per_set);
+			p_stats->vc_misses++; //for whatever reason, we incr vc_misses even when !VC_enabled
+			evict_block = evict_choice(first_block_in_set, L1.blocks_per_set);
 			if (evict_block->dirty) {
+				// dirty block back to mem
 				p_stats->write_backs++;
 				p_stats->bytes_transferred += bytes_per_block;
 			}
 			overwrite_block_for_new_addr(evict_block, addr);
-			p_stats->bytes_transferred += bytes_per_block;
+			p_stats->bytes_transferred += bytes_per_block; //new block from mem to L1
 			if (rw == WRITE)
 				//ugh, calling it evict_block still after it's
 				//been overwritten is a bit confusing to the
@@ -153,7 +153,36 @@ void general_cache_access(struct cache * cache, char rw, uint64_t addr, struct c
 				evict_block->dirty = 1;
 		}
 	}
-	cur_time++;
+}
+
+void VC_cache_access(char rw, uint64_t addr, struct cache_stats_t* p_stats, struct block * first_block_in_set_of_L1) {
+	struct block * block_in_cache = find_block_in_set(VC.blocks, VC.blocks_per_set, addr);
+	struct block * L1_evict_block = evict_choice(first_block_in_set_of_L1, L1.blocks_per_set);
+	struct block * VC_evict_block;
+
+	if (block_in_cache != NULL){
+		// hit, promotion from VC to L1
+		if (rw == WRITE)
+			block_in_cache->dirty = 1;
+		block_in_cache->time = cur_time; //this is MRU
+		L1_evict_block->time = cur_time; //this is going into the FIFO VC
+		swap_blocks(L1_evict_block, block_in_cache);
+	} else {
+		// miss, evict L1 LRU to VC and evict VC FIFO completely from VC
+		p_stats->vc_misses++;
+		(rw == READ) ? p_stats->read_misses_combined++ : p_stats->write_misses_combined++;
+		VC_evict_block = evict_choice(VC.blocks, VC.blocks_per_set);
+		if (VC_evict_block->dirty) {
+			p_stats->write_backs++;
+			p_stats->bytes_transferred += bytes_per_block;
+		}
+		p_stats->bytes_transferred += bytes_per_block; //copy new bytes from mem
+		copy_block(L1_evict_block, VC_evict_block);
+		VC_evict_block->time = cur_time; //this block needs correct FIFO timing
+		overwrite_block_for_new_addr(L1_evict_block, addr);
+		if (rw == WRITE)
+			L1_evict_block->dirty = 1;
+	}
 }
 
 void overwrite_block_for_new_addr(struct block * block_to_overwrite, uint64_t new_addr) {

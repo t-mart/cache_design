@@ -20,8 +20,8 @@ struct cache_stats_t {
 
   double hit_time;
   uint64_t miss_penalty;
-  double   miss_rate;
-  double   avg_access_time;
+  double miss_rate;
+  double avg_access_time;
 };
 
 void cache_access(char rw, uint64_t address, struct cache_stats_t* p_stats);
@@ -53,6 +53,7 @@ struct block {
 	char valid;
 	uint64_t tag;
 	int time;
+  char was_prefetched;
 };
 
 struct cache {
@@ -60,16 +61,11 @@ struct cache {
 	struct block * blocks;
 	uint64_t n_blocks;
 	uint64_t blocks_per_set;
-
   // UBER IMPORTANT, YET SUBTLE. this is the difference between LRU and FIFO!!
   // * FIFO blocks get time set ONCE (when theyre pulled in from mem)
 	// * LRU blocks get their time set EVERY ACCESS
 	// This generalizes the eviction function: it simply needs to find the
 	// block with the oldest time
-	char update_time_on_access;
-
-	uint64_t n_prefetch_blocks;
-  struct cache * victim_cache;
 };
 
 
@@ -88,7 +84,9 @@ void print_cache_info(struct cache * c);
 void print_block_info(struct block * b);
 struct block * evict_choice(struct block * first_block_in_set, uint64_t blocks_per_set);
 void copy_block(struct block * from, struct block * to);
-void general_cache_access(struct cache * cache, char rw, uint64_t addr, struct cache_stats_t* p_stats);
+void swap_blocks(struct block * a, struct block * b);
+void L1_cache_access(char rw, uint64_t addr, struct cache_stats_t* p_stats);
+void VC_cache_access(char rw, uint64_t addr, struct cache_stats_t* p_stats, struct block * first_block_in_set_of_L1);
 struct block * get_addr_set(struct cache * cache, uint64_t addr);
 struct block * find_block_in_set(struct block * first_block_in_set, uint64_t blocks_per_set, uint64_t addr);
 void overwrite_block_for_new_addr(struct block * block_to_overwrite, uint64_t new_addr);
